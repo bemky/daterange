@@ -1,6 +1,7 @@
 export declare class DateRange {
   /**
-   * Parses an ISO 8601 interval ("start/end"), a Postgres range ("[start,end)") or "empty".
+   * Parses an ISO 8601 interval ("start/end"), a Postgres range ("[start,end)") or "empty", or a
+   * Ruby range ("start..end" includes the end, "start...end" excludes it).
    * "[" / "]" or no bracket is inclusive, "(" / ")" exclusive. Strings without an offset are UTC.
    * Date-only bounds name whole UTC days and are canonicalized like a Postgres daterange.
    */
