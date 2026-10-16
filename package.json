@@ -1,0 +1,21 @@
+{
+  "name": "daterange",
+  "version": "0.1.0",
+  "description": "Dependency-free date range class: parse ISO 8601 intervals, test overlap and containment, format with Intl.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
+  "types": "./src/index.d.ts",
+  "files": [
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "node --test"
+  }
+}
