@@ -19,7 +19,8 @@ export class DateRange {
    * [2021-01-01T00:00Z, 2021-02-01T00:00Z).
    *
    * @param {string|Date} start An ISO 8601 interval ("start/end"), a Postgres range ("[start,end)"
-   *   or "empty"), or the start of the range ("2021-01-01", "[2021-01-01", "(2021-01-01").
+   *   or "empty"), a Ruby range ("start..end" includes the end, "start...end" excludes it), or the
+   *   start of the range ("2021-01-01", "[2021-01-01", "(2021-01-01").
    * @param {string|Date} [end] The end of the range ("2021-02-01", "2021-02-01]", "2021-02-01)").
    *   Omit when `start` is an interval or range string.
    */
@@ -178,7 +179,8 @@ const POSTGRES_RANGE = /^\s*([[(])\s*(.*?)\s*,\s*(.*?)\s*([\])])\s*$/;
 const START_BRACKET = /^\s*([[(])?\s*(.*?)\s*$/;
 const END_BRACKET = /^\s*(.*?)\s*([\])])?\s*$/;
 const DATE_ONLY = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
-const DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2})(?:\.(\d+))?)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?$/i;
+const RUBY_RANGE = /^(.*?)(\.\.\.?)(.*)$/;
+const DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2})(?:\.(\d+))?)?\s*(Z|UTC|[+-]\d{2}(?::?\d{2})?)?$/i;
 
 // Returns [start, end] with any range brackets left on the bounds for toBound to read.
 function splitInterval(value) {
@@ -186,6 +188,13 @@ function splitInterval(value) {
   if (range) {
     const [, open, start, end, close] = range;
     return [open + start, end + close];
+  }
+  if (!value.includes('/')) {
+    const ruby = RUBY_RANGE.exec(value);
+    if (ruby) {
+      const [, start, dots, end] = ruby;
+      return [`[${start}`, `${end}${dots === '...' ? ')' : ']'}`];
+    }
   }
   const parts = value.split('/');
   if (parts.length !== 2) {
@@ -257,12 +266,14 @@ function parseUTC(text) {
 }
 
 // Rewrites a DATE_TIME match into the ECMAScript date-time format, which is the only one every
-// engine is required to parse.
+// engine is required to parse. Also covers Ruby's Time#to_s ("2019-01-01 00:00:00 UTC" or "+0000").
 function normalizeDateTime(match) {
   const [, date, hoursMinutes, seconds = '00', fraction = '', offset = 'Z'] = match;
   const millis = fraction.padEnd(3, '0').slice(0, 3);
   let zone = offset.toUpperCase();
-  if (/^[+-]\d{2}$/.test(zone)) {
+  if (zone === 'UTC') {
+    zone = 'Z';
+  } else if (/^[+-]\d{2}$/.test(zone)) {
     zone += ':00';
   } else if (/^[+-]\d{4}$/.test(zone)) {
     zone = `${zone.slice(0, 3)}:${zone.slice(3)}`;

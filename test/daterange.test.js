@@ -72,6 +72,33 @@ test('a date bound beside a timestamp bound', () => {
   assert.equal(String(new DateRange('[2021-01-01T12:00Z,2021-01-31]')), '[2021-01-01T12:00:00.000Z,2021-02-01T00:00:00.000Z)');
 });
 
+test('parses Ruby ranges: .. includes the end, ... excludes it', () => {
+  assert.equal(String(new DateRange('2019-01-01..2019-04-01')), '[2019-01-01,2019-04-02)');
+  assert.equal(String(new DateRange('2019-01-01...2019-04-01')), '[2019-01-01,2019-04-01)');
+  assert.equal(String(new DateRange(' 2019-01-01...2019-04-01 ')), '[2019-01-01,2019-04-01)');
+  assert.ok(new DateRange('2019-01-01..2019-04-01').contains(at('2019-04-01T12:00:00Z')));
+  assert.ok(!new DateRange('2019-01-01...2019-04-01').contains(at('2019-04-01T00:00:00Z')));
+  assert.ok(new DateRange('2019-01-01...2019-01-01').isEmpty);
+});
+
+test('parses Ruby Time#to_s bounds', () => {
+  assert.equal(
+    String(new DateRange('2019-01-01 00:00:00 UTC...2019-04-01 10:00:00.5 +0530')),
+    '[2019-01-01T00:00:00.000Z,2019-04-01T04:30:00.500Z)',
+  );
+  assert.equal(
+    String(new DateRange('2019-01-01T00:00:00.123Z..2019-04-01T00:00:00Z')),
+    '[2019-01-01T00:00:00.123Z,2019-04-01T00:00:00.000Z]',
+  );
+});
+
+test('rejects endless and beginless Ruby ranges', () => {
+  assert.throws(() => new DateRange('2019-01-01..'), RangeError);
+  assert.throws(() => new DateRange('...2019-04-01'), RangeError);
+  assert.throws(() => new DateRange('2019-01-01....2019-04-01'), RangeError);
+  assert.throws(() => new DateRange('2019-01-01/..'), RangeError, 'ISO 8601-2 open end');
+});
+
 test('parses quoted Postgres timestamps', () => {
   const range = new DateRange('["2021-01-01 00:00:00+00","2021-02-01 10:30:00.123456-05:30")');
   assert.equal(String(range), '[2021-01-01T00:00:00.000Z,2021-02-01T16:00:00.123Z)');

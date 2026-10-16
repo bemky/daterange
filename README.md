@@ -19,7 +19,10 @@ JSON.stringify(q1);                                     // '"[2026-01-01,2026-04
 
 ### `new DateRange(interval)` / `new DateRange(start, end)`
 
-- `interval`: an ISO 8601 interval (`"2021-01-01/2021-02-01"`), a Postgres range (`"[2021-01-01,2021-02-01)"`), or `"empty"`.
+- `interval`: one of:
+  - an ISO 8601 interval: `"2021-01-01/2021-02-01"`
+  - a Postgres range: `"[2021-01-01,2021-02-01)"` or `"empty"`
+  - a Ruby range: `"2019-01-01..2019-04-01"` includes the end, `"2019-01-01...2019-04-01"` excludes it. Bounds may be Ruby `Time#to_s` output, e.g. `"2019-01-01 00:00:00 UTC"` or `"2019-01-01 00:00:00 +0000"`.
 - `start`, `end`: date strings or `Date` objects. Strings may carry a bracket on their outer side: `"[2021-01-01"`, `"2021-02-01)"`.
 
 `[` and `]` make a bound inclusive, `(` and `)` exclusive. A bound with no bracket, including a `Date`, is inclusive. ISO 8601 has no inclusivity syntax, so an ISO interval is read as inclusive at both ends, the same as `[start,end]`.
@@ -40,7 +43,7 @@ So `[2021-01-01,2021-01-31]` contains `2021-01-31T12:00:00Z`, and its `end` is F
 
 As in Postgres, a range with no instants is empty: `[x,x)`, `(x,x]`, `(x,x)`, and date ranges such as `(2021-01-01,2021-01-02)`.
 
-Throws `TypeError` for malformed arguments, and `RangeError` for other date formats, impossible dates (`2021-02-30`), unbounded ranges (`[2021-01-01,)`), or a start after the end.
+Throws `TypeError` for malformed arguments, and `RangeError` for other date formats, impossible dates (`2021-02-30`), unbounded ranges (`[2021-01-01,)`, or Ruby's `2019-01-01..`), or a start after the end.
 
 ### Properties
 
