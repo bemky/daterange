@@ -92,11 +92,74 @@ test('parses Ruby Time#to_s bounds', () => {
   );
 });
 
-test('rejects endless and beginless Ruby ranges', () => {
-  assert.throws(() => new DateRange('2019-01-01..'), RangeError);
-  assert.throws(() => new DateRange('...2019-04-01'), RangeError);
+test('rejects malformed Ruby ranges', () => {
   assert.throws(() => new DateRange('2019-01-01....2019-04-01'), RangeError);
-  assert.throws(() => new DateRange('2019-01-01/..'), RangeError, 'ISO 8601-2 open end');
+});
+
+const unbounded = (range) => [String(range), range.startUnbounded, range.endUnbounded];
+
+test('parses unbounded ends in every syntax', () => {
+  for (const value of ['[2021-01-01,)', '[2021-01-01, )', '[2021-01-01,]', '[2021-01-01,infinity)', '[2021-01-01,Infinity]', '2021-01-01/..', '2021-01-01..', '2021-01-01...']) {
+    assert.deepEqual(unbounded(new DateRange(value)), ['[2021-01-01,)', false, true], value);
+  }
+  assert.deepEqual(unbounded(new DateRange('2021-01-01', null)), ['[2021-01-01,)', false, true]);
+});
+
+test('parses unbounded starts in every syntax', () => {
+  for (const value of ['(,2021-01-31]', '[,2021-01-31]', '(-infinity,2021-01-31]', '../2021-01-31', '..2021-01-31', '...2021-02-01']) {
+    assert.deepEqual(unbounded(new DateRange(value)), ['(,2021-02-01)', true, false], value);
+  }
+  assert.deepEqual(unbounded(new DateRange(null, '2021-02-01)')), ['(,2021-02-01)', true, false]);
+});
+
+test('parses ranges unbounded at both ends', () => {
+  for (const value of ['(,)', '[,]', '(-infinity,infinity)', '../..', '..', '...']) {
+    assert.deepEqual(unbounded(new DateRange(value)), ['(,)', true, true], value);
+  }
+  assert.deepEqual(unbounded(new DateRange(null, null)), ['(,)', true, true]);
+});
+
+test('unbounded sides have no start or end and are exclusive', () => {
+  const range = new DateRange('[2021-01-01T10:00Z,)');
+  assert.equal(range.start.toISOString(), '2021-01-01T10:00:00.000Z');
+  assert.equal(range.end, null);
+  assert.equal(range.endInclusive, false);
+  assert.equal(String(range), '[2021-01-01T10:00:00.000Z,)');
+  assert.ok(!range.isEmpty);
+  assert.ok(!new DateRange('empty').startUnbounded);
+});
+
+test('rejects blank or misplaced unbounded markers', () => {
+  assert.throws(() => new DateRange('2021-01-01/'), RangeError, 'ISO 8601-2 unknown end');
+  assert.throws(() => new DateRange('2021-01-01', ''), RangeError);
+  assert.throws(() => new DateRange('2021-01-01', undefined), TypeError);
+  assert.throws(() => new DateRange('[infinity,2021-01-01)'), RangeError);
+  assert.throws(() => new DateRange('[2021-01-01,-infinity)'), RangeError);
+});
+
+test('comparisons with unbounded ranges', () => {
+  const since = new DateRange('[2021-01-01,)');
+  const until = new DateRange('(,2021-01-01)');
+  const always = new DateRange('(,)');
+  assert.ok(since.contains(at('9999-12-31T00:00Z')));
+  assert.ok(!since.contains(at('2020-12-31T23:59:59.999Z')));
+  assert.ok(until.contains(at('0001-01-01T00:00Z')));
+  assert.ok(!since.overlaps(until));
+  assert.ok(always.contains(since) && always.contains(until) && always.contains(always));
+  assert.ok(!since.contains(always));
+  assert.ok(since.contains(new DateRange('[2021-06-01,)')));
+  assert.ok(!new DateRange('[2021-06-01,)').contains(since));
+  assert.ok(always.contains(new DateRange('empty')));
+  assert.ok(!always.overlaps(new DateRange('empty')));
+});
+
+test('format labels a range with one bound', () => {
+  const utc = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeZone: 'UTC' });
+  assert.equal(new DateRange('[2021-01-01,)').format({ dateStyle: 'medium' }), `Since ${utc.format(at('2021-01-01T00:00Z'))}`);
+  assert.equal(new DateRange('(,2021-01-31]').format({ dateStyle: 'medium' }), `Until ${utc.format(at('2021-01-31T00:00Z'))}`);
+  assert.equal(new DateRange('[2021-01-01,)').format({ dateStyle: 'medium', after: 'From' }), `From ${utc.format(at('2021-01-01T00:00Z'))}`);
+  assert.equal(new DateRange('(,2021-01-31]').format({ dateStyle: 'medium', before: 'Through' }), `Through ${utc.format(at('2021-01-31T00:00Z'))}`);
+  assert.equal(new DateRange('(,)').format(), '');
 });
 
 test('parses quoted Postgres timestamps', () => {
@@ -124,7 +187,6 @@ test('empty ranges', () => {
 });
 
 test('rejects malformed ranges, impossible dates and non-ISO formats', () => {
-  assert.throws(() => new DateRange('[2021-01-01,)'), RangeError, 'unbounded');
   assert.throws(() => new DateRange('2021-02-30/2021-03-01'), RangeError);
   assert.throws(() => new DateRange('2021-02-30T00:00Z/2021-03-01'), RangeError);
   assert.throws(() => new DateRange('2021-13/2022'), RangeError);

@@ -21,8 +21,11 @@ export class DateRange {
    * @param {string|Date} start An ISO 8601 interval ("start/end"), a Postgres range ("[start,end)"
    *   or "empty"), a Ruby range ("start..end" includes the end, "start...end" excludes it), or the
    *   start of the range ("2021-01-01", "[2021-01-01", "(2021-01-01").
-   * @param {string|Date} [end] The end of the range ("2021-02-01", "2021-02-01]", "2021-02-01)").
-   *   Omit when `start` is an interval or range string.
+   * @param {string|Date|null} [end] The end of the range ("2021-02-01", "2021-02-01]", "2021-02-01)").
+   *   Omit when `start` is an interval or range string. Null for no end, and likewise for `start`.
+   *
+   * Unbounded sides: "[2021-01-01,)" or "[2021-01-01,infinity)" in Postgres, "2021-01-01/.." in
+   * ISO 8601-2, "2021-01-01.." or "..2021-01-01" in Ruby.
    */
   constructor(start, end) {
     if (end === undefined) {
@@ -62,17 +65,28 @@ export class DateRange {
     this.#end = endTime;
     this.#startInclusive = startInclusive;
     this.#endInclusive = endInclusive;
-    this.#dates = startNext !== undefined && endNext !== undefined;
+    // Whether every bound that exists is a date, so the range prints and formats as dates.
+    this.#dates = (startNext !== undefined || startTime === -Infinity) && (endNext !== undefined || endTime === Infinity);
   }
 
-  /** @returns {Date|null} A copy of the start, so callers cannot mutate the range. Null when empty. */
+  /** @returns {Date|null} A copy of the start, so callers cannot mutate the range. Null when empty or unbounded. */
   get start() {
-    return this.#empty ? null : new Date(this.#start);
+    return this.#empty || this.startUnbounded ? null : new Date(this.#start);
   }
 
-  /** @returns {Date|null} A copy of the end, so callers cannot mutate the range. Null when empty. */
+  /** @returns {Date|null} A copy of the end, so callers cannot mutate the range. Null when empty or unbounded. */
   get end() {
-    return this.#empty ? null : new Date(this.#end);
+    return this.#empty || this.endUnbounded ? null : new Date(this.#end);
+  }
+
+  /** @returns {boolean} Whether the range has no start, like Postgres `lower_inf`. */
+  get startUnbounded() {
+    return this.#start === -Infinity;
+  }
+
+  /** @returns {boolean} Whether the range has no end, like Postgres `upper_inf`. */
+  get endUnbounded() {
+    return this.#end === Infinity;
   }
 
   /** @returns {boolean} Whether `start` is part of the range. False when empty. */
@@ -125,26 +139,42 @@ export class DateRange {
 
   /**
    * Formats the range with `Intl.DateTimeFormat.prototype.formatRange` in the default locale.
+   * A range with one bound formats that date after a label: `after` ("Since") when it only has a
+   * start, `before` ("Until") when it only has an end.
    * A range of dates shows its last included day ("Jan 1 – 31", not "Jan 1 – Feb 1") and defaults
-   * to `timeZone: 'UTC'`, since its days are UTC days. Returns an empty string for an empty range.
-   * @param {Intl.DateTimeFormatOptions} [options]
+   * to `timeZone: 'UTC'`, since its days are UTC days. Returns an empty string for an empty range
+   * or one with no bounds.
+   * @param {Intl.DateTimeFormatOptions & { before?: string, after?: string }} [options]
    * @returns {string}
    */
-  format(options) {
+  format(options = {}) {
     if (this.#empty) {
       return '';
     }
-    if (this.#dates) {
-      const lastDay = new Date(this.#end);
-      lastDay.setUTCDate(lastDay.getUTCDate() - 1);
-      return new Intl.DateTimeFormat(undefined, { timeZone: 'UTC', ...options }).formatRange(this.#start, lastDay);
+    const { before = 'Until', after = 'Since', ...intlOptions } = options;
+    const formatter = new Intl.DateTimeFormat(undefined, this.#dates ? { timeZone: 'UTC', ...intlOptions } : intlOptions);
+    const start = this.start;
+    let end = this.end;
+    if (end && this.#dates) {
+      end.setUTCDate(end.getUTCDate() - 1);
     }
-    return new Intl.DateTimeFormat(undefined, options).formatRange(this.#start, this.#end);
+
+    if (start && end) {
+      return formatter.formatRange(start, end);
+    }
+    if (start) {
+      return `${after} ${formatter.format(start)}`;
+    }
+    if (end) {
+      return `${before} ${formatter.format(end)}`;
+    }
+    return '';
   }
 
   /**
    * The range in Postgres syntax: "[2021-01-01,2021-02-01)" when both bounds are dates, otherwise
-   * UTC timestamps, e.g. "[2021-01-01T10:00:00.000Z,2021-02-01T10:00:00.000Z)". "empty" when empty.
+   * UTC timestamps, e.g. "[2021-01-01T10:00:00.000Z,2021-02-01T10:00:00.000Z)". An unbounded side
+   * is left blank, as in "[2021-01-01,)". "empty" when empty.
    * @returns {string}
    */
   toString() {
@@ -152,6 +182,9 @@ export class DateRange {
       return 'empty';
     }
     const text = (time) => {
+      if (!Number.isFinite(time)) {
+        return '';
+      }
       const iso = new Date(time).toISOString();
       return this.#dates ? iso.slice(0, 10) : iso;
     };
@@ -182,30 +215,36 @@ const DATE_ONLY = /^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$/;
 const RUBY_RANGE = /^(.*?)(\.\.\.?)(.*)$/;
 const DATE_TIME = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::(\d{2})(?:\.(\d+))?)?\s*(Z|UTC|[+-]\d{2}(?::?\d{2})?)?$/i;
 
-// Returns [start, end] with any range brackets left on the bounds for toBound to read.
+// Returns [start, end] with any range brackets left on the bounds for toBound to read, and null
+// for a side the format marks as unbounded: blank in Postgres and Ruby, ".." in ISO 8601-2.
 function splitInterval(value) {
   const range = POSTGRES_RANGE.exec(value);
   if (range) {
     const [, open, start, end, close] = range;
-    return [open + start, end + close];
+    return [start ? open + start : null, end ? end + close : null];
   }
   if (!value.includes('/')) {
     const ruby = RUBY_RANGE.exec(value);
     if (ruby) {
-      const [, start, dots, end] = ruby;
-      return [`[${start}`, `${end}${dots === '...' ? ')' : ']'}`];
+      const [, start, dots, end] = ruby.map((part) => part.trim());
+      return [start ? `[${start}` : null, end ? `${end}${dots === '...' ? ')' : ']'}` : null];
     }
   }
   const parts = value.split('/');
   if (parts.length !== 2) {
     throw new TypeError(`Invalid interval: "${value}"`);
   }
-  return parts;
+  return parts.map((part) => (part.trim() === '..' ? null : part));
 }
 
 // Returns [time, inclusive, next], where next is the start of the following period for a date-only
-// bound and undefined otherwise.
+// bound and undefined otherwise. An unbounded side is -Infinity or Infinity and, as in Postgres,
+// always exclusive, which lets the comparisons treat it like any other bound.
 function toBound(value, name) {
+  const isStart = name === 'start';
+  if (value === null) {
+    return [isStart ? -Infinity : Infinity, false];
+  }
   if (value instanceof Date) {
     const time = value.getTime();
     if (Number.isNaN(time)) {
@@ -217,11 +256,15 @@ function toBound(value, name) {
     throw new TypeError(`DateRange ${name} must be a string or a Date`);
   }
 
-  const isStart = name === 'start';
   const [, a, b] = (isStart ? START_BRACKET : END_BRACKET).exec(value);
   const [bracket, text] = isStart ? [a, b] : [b, a];
+  const bound = unquote(text);
 
-  const [time, next] = parseUTC(unquote(text));
+  // Postgres's infinity values. No Date can equal them, so they are the same as no bound.
+  if (bound.toLowerCase() === (isStart ? '-infinity' : 'infinity')) {
+    return toBound(null, name);
+  }
+  const [time, next] = parseUTC(bound);
   if (Number.isNaN(time)) {
     throw new RangeError(`Invalid DateRange ${name}: "${value}"`);
   }
