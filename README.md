@@ -43,22 +43,39 @@ So `[2021-01-01,2021-01-31]` contains `2021-01-31T12:00:00Z`, and its `end` is F
 
 As in Postgres, a range with no instants is empty: `[x,x)`, `(x,x]`, `(x,x)`, and date ranges such as `(2021-01-01,2021-01-02)`.
 
-Throws `TypeError` for malformed arguments, and `RangeError` for other date formats, impossible dates (`2021-02-30`), unbounded ranges (`[2021-01-01,)`, or Ruby's `2019-01-01..`), or a start after the end.
+**Unbounded sides** use each format's own syntax:
+
+| Format             | No end                                    | No start                                   | Neither                      |
+| ------------------ | ----------------------------------------- | ------------------------------------------ | ---------------------------- |
+| Postgres           | `[2021-01-01,)`, `[2021-01-01,infinity)`  | `(,2021-02-01]`, `(-infinity,2021-02-01]`  | `(,)`                        |
+| ISO 8601-2         | `2021-01-01/..`                           | `../2021-02-01`                            | `../..`                      |
+| Ruby               | `2021-01-01..`                            | `..2021-02-01`, `...2021-02-01`            | `..`                         |
+| Arguments          | `new DateRange('2021-01-01', null)`       | `new DateRange(null, '2021-02-01')`        | `new DateRange(null, null)`  |
+
+As in Postgres, an unbounded side is always exclusive, so `[,2021-02-01]` is read as `(,2021-02-01]`. No `Date` can be infinity, so `infinity` and a blank side mean the same thing. A blank ISO side (`2021-01-01/`) means "unknown" in ISO 8601-2, not open, so it throws.
+
+Throws `TypeError` for malformed arguments, and `RangeError` for other date formats, impossible dates (`2021-02-30`), or a start after the end.
 
 ### Properties
 
-- `start`, `end`: `Date` copies, so changing them does not change the range. `null` when empty.
-- `startInclusive`, `endInclusive`: booleans. `false` when empty, matching Postgres `lower_inc`/`upper_inc`.
+- `start`, `end`: `Date` copies, so changing them does not change the range. `null` when empty or unbounded.
+- `startInclusive`, `endInclusive`: booleans. `false` when empty or unbounded, matching Postgres `lower_inc`/`upper_inc`.
+- `startUnbounded`, `endUnbounded`: booleans, matching Postgres `lower_inf`/`upper_inf`.
 - `isEmpty`: whether the range contains no instants.
 
 ### Methods
 
 - `overlaps(Date | DateRange)`: like Postgres `&&`. Ranges that only touch at an exclusive bound do not overlap. Empty ranges overlap nothing.
 - `contains(Date | DateRange)`: like Postgres `@>`. Every range contains an empty range.
-- `format(options)`: `new Intl.DateTimeFormat(undefined, options).formatRange(start, end)`. For a date range it shows the last included day (`Jan 1 – 31`, not `Jan 1 – Feb 1`), and `timeZone` defaults to `'UTC'`. Returns `''` when empty.
+- `format(options)`: `new Intl.DateTimeFormat(undefined, options).formatRange(start, end)`.
+  - With only a start, formats the start after `options.after` (default `'Since'`): `"Since Jan 1, 2021"`.
+  - With only an end, formats the end after `options.before` (default `'Until'`): `"Until Jan 31, 2021"`.
+  - For a date range it shows the last included day (`Jan 1 – 31`, not `Jan 1 – Feb 1`), and `timeZone` defaults to `'UTC'`.
+  - Returns `''` when empty or unbounded at both ends.
 - `toString()`, `toJSON()`: Postgres range syntax that the constructor and Postgres both read back unchanged:
-  - both bounds dates: `[2021-01-01,2021-02-01)`, as Postgres prints a `daterange`
+  - every bound a date: `[2021-01-01,2021-02-01)`, as Postgres prints a `daterange`
   - otherwise: UTC timestamps, `[2021-01-01T10:00:00.000Z,2021-02-01T00:00:00.000Z)`, readable as a `tstzrange`
+  - an unbounded side is blank: `[2021-01-01,)`
   - `"empty"` when empty
 
 A `Date` argument is treated as the single instant `[date,date]`. Note that `new Date('2021-01-31T12:00:00')` with no offset is *local* time in JavaScript. Add `Z` for UTC.
